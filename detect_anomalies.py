@@ -8,7 +8,8 @@ log dataset and flag suspicious events:
   - Impossible travel: consecutive logins on the same account implying
     a physically impossible travel speed between locations.
   - New device logins: flags devices never seen before on an account.
-  - (Later) Approval-bypass detection.
+  - Approval bypass: flags payments approved suspiciously fast after
+    creation, suggesting the normal review step was skipped.
 
 Each rule outputs flagged events with a reason and severity, which
 later feed into the attack-graph construction stage.
@@ -50,10 +51,7 @@ def detect_impossible_travel(logins):
     """
     Groups logins by account, sorts them chronologically, and checks
     each consecutive pair for impossible travel: a required speed
-    between their two locations that exceeds realistic limits
-    (commercial aircraft max ~900 km/h; we use 1000 km/h as a
-    generous upper bound to avoid false positives from time-zone
-    or measurement imprecision).
+    between their two locations that exceeds realistic limits.
     """
     MAX_PLAUSIBLE_SPEED_KMH = 1000
 
@@ -117,8 +115,7 @@ def detect_new_device_logins(logins):
     """
     Tracks which devices have historically been used on each account,
     and flags any login using a device never seen before for that
-    account — a real 'device trust' signal used in identity security
-    systems, independent of location-based checks.
+    account.
     """
     by_account = {}
     for login in logins:
@@ -156,6 +153,43 @@ def print_device_flags(flagged):
         print()
 
 
+def detect_approval_bypass(payments):
+    """
+    Flags payments approved suspiciously quickly after creation —
+    a signal that the normal human review/approval step may have
+    been bypassed, rather than genuinely reviewed.
+    """
+    BYPASS_THRESHOLD_SECONDS = 60
+
+    flagged = []
+
+    for payment in payments:
+        created = datetime.fromisoformat(payment["created_at"])
+        approved = datetime.fromisoformat(payment["approved_at"])
+        gap_seconds = (approved - created).total_seconds()
+
+        if gap_seconds < BYPASS_THRESHOLD_SECONDS:
+            flagged.append({
+                "account_id": payment["account_id"],
+                "event_type": "approval_bypass",
+                "amount": payment["amount"],
+                "gap_seconds": round(gap_seconds, 1),
+                "created_at": payment["created_at"],
+                "approved_at": payment["approved_at"],
+                "is_injected_attack": payment.get("is_injected_attack", False),
+            })
+
+    return flagged
+
+
+def print_approval_flags(flagged):
+    print(f"\n===== APPROVAL BYPASS FLAGS ({len(flagged)} found) =====\n")
+    for flag in flagged:
+        marker = " [GROUND TRUTH ATTACK]" if flag["is_injected_attack"] else ""
+        print(f"{flag['account_id']}: ${flag['amount']} approved in {flag['gap_seconds']}s{marker}")
+        print()
+
+
 if __name__ == "__main__":
     data = load_logs()
 
@@ -164,3 +198,6 @@ if __name__ == "__main__":
 
     device_flags = detect_new_device_logins(data["logins"])
     print_device_flags(device_flags)
+
+    approval_flags = detect_approval_bypass(data["payments"])
+    print_approval_flags(approval_flags)
