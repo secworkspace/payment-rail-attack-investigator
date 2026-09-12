@@ -3,14 +3,16 @@ generate_logs.py
 
 Generates a synthetic dataset of financial activity logs for the
 Payment Rail Attack Graph Investigator project. Creates realistic
-fake accounts and, in later steps, layers on authentication, account,
-payment, and destination events — including deliberately injected
-attack sequences used as ground truth for testing detection logic.
+fake accounts and layers on authentication, account, payment, and
+destination events -- including several deliberately injected attack
+sequences, each varying which specific signals are present, used as
+ground truth for testing detection logic against more than one case.
 """
 
 from faker import Faker
 import random
 import json
+from datetime import datetime, timedelta
 
 fake = Faker()
 
@@ -34,11 +36,10 @@ def generate_accounts(num_accounts=NUM_ACCOUNTS):
         accounts.append(account)
     return accounts
 
-from datetime import datetime, timedelta
 
 def generate_normal_logins(accounts, days=30, logins_per_account=10):
     """
-    Generates normal login events for each account — consistently
+    Generates normal login events for each account -- consistently
     from their home IP/country, at realistic random times over the
     given period. This represents ordinary, expected behavior.
     """
@@ -63,31 +64,6 @@ def generate_normal_logins(accounts, days=30, logins_per_account=10):
     return logins
 
 
-def inject_attack_login(accounts, logins, target_index=0):
-    """
-    Injects one suspicious login into a target account's history:
-    a login from a completely different country/IP/device than that
-    account's normal pattern, at a specific recent time. This is the
-    'ground truth' attack event our detection logic should catch.
-    """
-    target_account = accounts[target_index]
-
-    attack_login = {
-        "account_id": target_account["account_id"],
-        "event_type": "login",
-        "timestamp": datetime.now().isoformat(),
-        "ip": fake.ipv4(),  # a brand-new, unrelated IP
-        "country": fake.country_code(),  # different from home_country
-        "device_id": f"device-unknown-{random.randint(1000,9999)}",
-        "is_injected_attack": True,  # marks this as ground truth for later validation
-    }
-
-    logins.append(attack_login)
-    print(f"Injected attack login into {target_account['account_id']} "
-          f"({target_account['home_country']} → {attack_login['country']})")
-
-    return attack_login 
-
 def generate_normal_account_events(accounts, days=30):
     """
     Generates occasional normal beneficiary-addition events for
@@ -97,7 +73,6 @@ def generate_normal_account_events(accounts, days=30):
     events = []
     start_date = datetime.now() - timedelta(days=days)
 
-    # Only some accounts add a beneficiary during this period — not all
     accounts_with_activity = random.sample(accounts, k=len(accounts) // 3)
 
     for account in accounts_with_activity:
@@ -113,18 +88,48 @@ def generate_normal_account_events(accounts, days=30):
     return events
 
 
-def inject_attack_sequence(accounts, attack_login, target_index=0):
+def inject_one_attack(accounts, target_index, use_new_country, use_new_device, use_bypass, label):
     """
-    Given the injected attack login, builds the rest of the attack
-    chain: a beneficiary added shortly after the suspicious login,
-    followed by a payment created and approved suspiciously fast
-    (simulating an approval-bypass), completing the ground-truth
-    attack sequence.
+    Injects one complete attack sequence into a target account, with
+    each of the three signals (impossible travel, new device, approval
+    bypass) independently toggleable.
+
+    A 'last known normal login' is inserted a short time before the
+    attack login, using the account's real home country/device. This
+    mirrors realistic attacker behavior -- credential theft is
+    typically followed by login attempts not long after the victim's
+    last genuine session -- and ensures the impossible-travel check
+    has a recent, relevant prior session to compare against, rather
+    than depending on chance spacing in the randomly generated normal
+    login history.
     """
     target_account = accounts[target_index]
-    login_time = datetime.fromisoformat(attack_login["timestamp"])
+    login_time = datetime.now() - timedelta(days=random.uniform(0, 5))
 
-    # Beneficiary added just minutes after the suspicious login
+    anchor_login = {
+        "account_id": target_account["account_id"],
+        "event_type": "login",
+        "timestamp": (login_time - timedelta(minutes=random.randint(20, 90))).isoformat(),
+        "ip": target_account["home_ip"],
+        "country": target_account["home_country"],
+        "device_id": f"device-{target_account['account_id']}-primary",
+    }
+
+    login_country = fake.country_code() if use_new_country else target_account["home_country"]
+    login_device = (f"device-unknown-{random.randint(1000,9999)}" if use_new_device
+                     else f"device-{target_account['account_id']}-primary")
+
+    attack_login = {
+        "account_id": target_account["account_id"],
+        "event_type": "login",
+        "timestamp": login_time.isoformat(),
+        "ip": fake.ipv4() if use_new_country else target_account["home_ip"],
+        "country": login_country,
+        "device_id": login_device,
+        "is_injected_attack": True,
+        "attack_label": label,
+    }
+
     beneficiary_time = login_time + timedelta(minutes=random.randint(2, 10))
     beneficiary_event = {
         "account_id": target_account["account_id"],
@@ -133,14 +138,17 @@ def inject_attack_sequence(accounts, attack_login, target_index=0):
         "beneficiary_name": fake.name(),
         "beneficiary_account": fake.iban(),
         "is_injected_attack": True,
+        "attack_label": label,
     }
 
-    # Payment created shortly after the beneficiary is added
     payment_created_time = beneficiary_time + timedelta(minutes=random.randint(1, 5))
-    # Payment "approved" almost immediately — simulating a bypassed approval step
-    payment_approved_time = payment_created_time + timedelta(seconds=random.randint(5, 30))
+    if use_bypass:
+        payment_approved_time = payment_created_time + timedelta(seconds=random.randint(5, 30))
+    else:
+        # Normal approval timing -- a genuine review took place
+        payment_approved_time = payment_created_time + timedelta(minutes=random.randint(10, 45))
 
-    payment_event = {
+    attack_payment = {
         "account_id": target_account["account_id"],
         "event_type": "payment",
         "created_at": payment_created_time.isoformat(),
@@ -148,28 +156,11 @@ def inject_attack_sequence(accounts, attack_login, target_index=0):
         "amount": round(random.uniform(8000, 25000), 2),
         "beneficiary_account": beneficiary_event["beneficiary_account"],
         "is_injected_attack": True,
+        "attack_label": label,
     }
 
-    print(f"Injected beneficiary change + payment for {target_account['account_id']}")
-    print(f"  Beneficiary added: {beneficiary_time}")
-    print(f"  Payment created:   {payment_created_time}")
-    print(f"  Payment approved:  {payment_approved_time} "
-          f"(gap: {(payment_approved_time - payment_created_time).seconds}s)")
-
-    return beneficiary_event, payment_event 
-
-
-
-def inject_destination_chain(attack_payment):
-    """
-    Simulates the final stage of the attack: the fraudulent payment
-    moving through an intermediary account before reaching a
-    crypto exchange deposit address — completing the full attack
-    chain from initial login to cash-out.
-    """
     intermediary_account = fake.iban()
     exchange_address = f"exchange-deposit-{fake.uuid4()[:8]}"
-
     destination_events = [
         {
             "event_type": "fund_transfer",
@@ -178,64 +169,95 @@ def inject_destination_chain(attack_payment):
             "amount": attack_payment["amount"],
             "timestamp": attack_payment["approved_at"],
             "is_injected_attack": True,
+            "attack_label": label,
         },
         {
             "event_type": "fund_transfer",
             "from_account": intermediary_account,
             "to_account": exchange_address,
-            "amount": round(attack_payment["amount"] * 0.97, 2),  # minor fee/skim
+            "amount": round(attack_payment["amount"] * 0.97, 2),
             "timestamp": attack_payment["approved_at"],
             "is_injected_attack": True,
+            "attack_label": label,
         },
     ]
 
-    print(f"  Intermediary: {intermediary_account}")
-    print(f"  Final destination (exchange): {exchange_address}")
+    print(f"[{label}] {target_account['account_id']}: "
+          f"country_change={use_new_country}, new_device={use_new_device}, bypass={use_bypass}")
+    print(f"  Anchor login: {anchor_login['country']} at {anchor_login['timestamp']}")
+    print(f"  Login: {login_country} / {login_device}")
+    print(f"  Approval gap: {(payment_approved_time - payment_created_time).seconds}s\n")
 
-    return destination_events
+    return anchor_login, attack_login, beneficiary_event, attack_payment, destination_events
 
 
-def save_all_logs(logins, account_events, attack_login, attack_beneficiary, attack_payment, destination_events, filename="synthetic_logs.json"):
+def generate_attack_variants(accounts):
     """
-    Combines every generated event into a single dataset and saves
-    it to disk as JSON, ready for the detection and graph-building
-    stages to consume.
+    Injects several distinct attack profiles across different accounts,
+    covering the full attack (all 3 signals) plus partial variants
+    missing one signal each -- so validation reflects performance
+    across a range of realistic attacker behavior, not just one case.
     """
-    all_logins = logins + [attack_login]
-    all_account_events = account_events + [attack_beneficiary]
-    all_payments = [attack_payment]
+    variants = [
+        # (target_index, new_country, new_device, bypass, label)
+        (0,  True,  True,  True,  "full_attack"),
+        (10, False, True,  True,  "same_country_new_device"),
+        (20, True,  False, True,  "new_country_same_device"),
+        (30, True,  True,  False, "no_approval_bypass"),
+        (40, False, True,  False, "device_only_weak_signal"),
+    ]
 
+    all_logins, all_beneficiaries, all_payments, all_destinations = [], [], [], []
+
+    for target_index, new_country, new_device, bypass, label in variants:
+        anchor, login, beneficiary, payment, destinations = inject_one_attack(
+            accounts, target_index, new_country, new_device, bypass, label
+        )
+        all_logins.append(anchor)
+        all_logins.append(login)
+        all_beneficiaries.append(beneficiary)
+        all_payments.append(payment)
+        all_destinations.extend(destinations)
+
+    return all_logins, all_beneficiaries, all_payments, all_destinations
+
+
+def save_all_logs(normal_logins, normal_account_events, attack_logins,
+                   attack_beneficiaries, attack_payments, destination_events,
+                   filename="synthetic_logs.json"):
+    """
+    Combines every generated event -- normal and injected -- into a
+    single dataset and saves it to disk as JSON.
+    """
     dataset = {
-        "logins": all_logins,
-        "account_events": all_account_events,
-        "payments": all_payments,
+        "logins": normal_logins + attack_logins,
+        "account_events": normal_account_events + attack_beneficiaries,
+        "payments": attack_payments,
         "destination_events": destination_events,
     }
 
     with open(filename, "w") as f:
         json.dump(dataset, f, indent=2)
 
-    print(f"\nSaved full dataset to {filename}")
-    print(f"  Logins: {len(all_logins)}")
-    print(f"  Account events: {len(all_account_events)}")
-    print(f"  Payments: {len(all_payments)}")
-    print(f"  Destination events: {len(destination_events)}")
+    print(f"Saved full dataset to {filename}")
+    print(f"  Logins: {len(dataset['logins'])}")
+    print(f"  Account events: {len(dataset['account_events'])}")
+    print(f"  Payments: {len(dataset['payments'])}")
+    print(f"  Destination events: {len(dataset['destination_events'])}")
+
 
 if __name__ == "__main__":
     accounts = generate_accounts()
     print(f"Generated {len(accounts)} accounts.\n")
 
-    logins = generate_normal_logins(accounts)
-    print(f"Generated {len(logins)} normal login events.\n")
+    normal_logins = generate_normal_logins(accounts)
+    print(f"Generated {len(normal_logins)} normal login events.\n")
 
-    attack_login = inject_attack_login(accounts, logins, target_index=0)
-    print(f"Attack login: {attack_login}\n")
+    normal_account_events = generate_normal_account_events(accounts)
+    print(f"Generated {len(normal_account_events)} normal beneficiary events.\n")
 
-    account_events = generate_normal_account_events(accounts)
-    print(f"Generated {len(account_events)} normal beneficiary events.\n")
+    print("Injecting attack variants...\n")
+    attack_logins, attack_beneficiaries, attack_payments, destination_events = generate_attack_variants(accounts)
 
-    attack_beneficiary, attack_payment = inject_attack_sequence(accounts, attack_login, target_index=0)
-
-    destination_events = inject_destination_chain(attack_payment)
-
-    save_all_logs(logins, account_events, attack_login, attack_beneficiary, attack_payment, destination_events)
+    save_all_logs(normal_logins, normal_account_events, attack_logins,
+                  attack_beneficiaries, attack_payments, destination_events)
