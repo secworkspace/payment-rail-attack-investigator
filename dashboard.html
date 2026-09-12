@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PRAI — Payment Rail Attack Graph Investigator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+  <style>
+    :root {
+      --bg:      #080b12;
+      --panel:   #0e1320;
+      --card:    #131926;
+      --b1:      rgba(255,255,255,0.06);
+      --b2:      rgba(255,255,255,0.11);
+      --cyan:    #00d4ff;
+      --cyan-lo: rgba(0,212,255,0.08);
+      --red:     #ff2d55;
+      --amber:   #ffd60a;
+      --green:   #32d74b;
+      --purple:  #bf5af2;
+      --blue:    #0a84ff;
+      --text:    #8899bb;
+      --dim:     #2d3d55;
+      --white:   #eef2ff;
+      --mono:    'JetBrains Mono', monospace;
+      --sans:    'Inter', system-ui, sans-serif;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--sans);}
+    body::before{
+      content:'';position:fixed;inset:0;pointer-events:none;
+      background-image:
+        linear-gradient(var(--b1) 1px,transparent 1px),
+        linear-gradient(90deg,var(--b1) 1px,transparent 1px);
+      background-size:48px 48px;
+    }
+    #app{position:relative;display:flex;flex-direction:column;height:100%;}
+    header{
+      flex-shrink:0;height:46px;
+      background:rgba(14,19,32,0.98);
+      border-bottom:1px solid var(--b1);
+      display:flex;align-items:center;
+      padding:0 16px;gap:10px;
+    }
+    .logo-mark{font-family:var(--mono);font-size:11px;font-weight:800;background:var(--cyan);color:#000;padding:3px 7px;border-radius:2px;letter-spacing:0.5px;flex-shrink:0;}
+    .logo-name{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--white);white-space:nowrap;}
+    .logo-name em{color:var(--cyan);font-style:normal;}
+    .hdiv{width:1px;height:16px;background:var(--b2);}
+    #hstats{display:none;align-items:center;gap:10px;}
+    .chip{font-family:var(--mono);font-size:9px;color:var(--dim);border:1px solid var(--b1);border-radius:2px;padding:3px 8px;display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.015);white-space:nowrap;}
+    .chip b{color:var(--cyan);font-weight:700;font-size:11px;}
+    .chip b.r{color:var(--red);}
+    .spacer{flex:1;}
+    .tabs{display:flex;gap:2px;}
+    .tab{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1.2px;padding:5px 12px;border:1px solid transparent;border-radius:2px;cursor:pointer;color:var(--dim);background:transparent;transition:all 0.15s;}
+    .tab:hover{color:var(--text);}
+    .tab.active{background:var(--cyan-lo);border-color:rgba(0,212,255,0.22);color:var(--cyan);}
+    .hctrl{display:flex;align-items:center;gap:7px;margin-left:12px;}
+    select{font-family:var(--mono);font-size:10px;background:var(--card);color:var(--white);border:1px solid var(--b2);border-radius:2px;padding:5px 9px;cursor:pointer;outline:none;}
+    #inv-btn{font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:1.2px;background:var(--cyan);color:#000;border:none;border-radius:2px;padding:6px 14px;cursor:pointer;transition:all 0.15s;}
+    #inv-btn:hover{background:#33dcff;}
+    #inv-btn.busy{background:var(--red);color:#fff;animation:blink 0.85s ease-in-out infinite;}
+    @keyframes blink{50%{opacity:0.55;}}
+    #exp-btn{font-family:var(--mono);font-size:9px;background:transparent;color:var(--dim);border:1px solid var(--b1);border-radius:2px;padding:5px 10px;cursor:pointer;display:none;transition:all 0.15s;}
+    #exp-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+    .tab-content{display:none;flex:1;overflow:hidden;flex-direction:column;}
+    .tab-content.active{display:flex;}
+    #t-inv{flex-direction:column;}
+    #verdict{flex-shrink:0;display:none;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:0.8px;padding:6px 16px;border-bottom:1px solid;}
+    #verdict.high{background:rgba(255,45,85,0.1);border-color:rgba(255,45,85,0.22);color:#ff6b87;}
+    #verdict.medium{background:rgba(255,214,10,0.08);border-color:rgba(255,214,10,0.2);color:var(--amber);}
+    #verdict.low{background:rgba(50,215,75,0.07);border-color:rgba(50,215,75,0.18);color:var(--green);}
+    #killchain{flex-shrink:0;display:none;padding:6px 16px;gap:5px;align-items:center;flex-wrap:wrap;background:rgba(14,19,32,0.85);border-bottom:1px solid var(--b1);}
+    .kc-tag{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--dim);letter-spacing:1.5px;margin-right:6px;}
+    .kc-pill{font-family:var(--mono);font-size:9px;font-weight:600;color:var(--cyan);border:1px solid rgba(0,212,255,0.2);padding:3px 9px;border-radius:2px;animation:pop 0.3s ease both;}
+    @keyframes pop{from{opacity:0;transform:scale(0.88);}to{opacity:1;transform:scale(1);}}
+    .kc-sep{color:var(--dim);font-size:10px;}
+    #inv-grid{flex:1;overflow:hidden;display:grid;grid-template-columns:1fr 272px;gap:10px;padding:10px 14px;}
+    .panel{background:var(--panel);border:1px solid var(--b1);border-radius:3px;display:flex;flex-direction:column;overflow:hidden;}
+    .pbar{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:7px 11px;border-bottom:1px solid var(--b1);}
+    .plabel{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--dim);letter-spacing:1.5px;}
+    .pmeta{font-family:var(--mono);font-size:9px;color:var(--dim);}
+    #graph-panel{position:relative;}
+    #cy-wrap{flex:1;position:relative;}
+    #cy{width:100%;height:100%;}
+    #scan-log{display:none;position:absolute;inset:0;background:#030508;padding:14px;overflow-y:auto;font-family:var(--mono);font-size:10.5px;color:var(--green);line-height:1.9;}
+    .ll{animation:ll-in 0.08s ease both;}
+    @keyframes ll-in{from{opacity:0;}to{opacity:1;}}
+    .lw{color:var(--red);}
+    .ld{color:#1a2d1e;}
+    #empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;}
+    .e-ring{width:44px;height:44px;border:1px dashed rgba(0,212,255,0.12);border-radius:50%;display:flex;align-items:center;justify-content:center;animation:rpulse 3s ease-in-out infinite;}
+    @keyframes rpulse{50%{border-color:rgba(0,212,255,0.28);}}
+    .e-txt{font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;line-height:1.9;}
+    #g-leg{display:none;position:absolute;bottom:9px;left:9px;background:rgba(8,11,18,0.94);border:1px solid var(--b1);border-radius:2px;padding:7px 10px;}
+    .gl-title{font-family:var(--mono);font-size:7px;font-weight:700;color:var(--dim);letter-spacing:1.2px;margin-bottom:5px;}
+    .gl-row{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;}
+    .gl-row:last-child{margin:0;}
+    .gl-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+    #g-tools{display:none;position:absolute;bottom:9px;right:9px;flex-direction:column;gap:4px;}
+    .g-btn{width:26px;height:26px;background:rgba(8,11,18,0.92);border:1px solid var(--b1);border-radius:2px;font-family:var(--mono);font-size:13px;color:var(--dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;}
+    .g-btn:hover{border-color:var(--cyan);color:var(--cyan);}
+    #node-tip{display:none;position:absolute;bottom:9px;left:50%;transform:translateX(-50%);background:rgba(6,9,15,0.97);border:1px solid var(--b2);border-radius:3px;padding:10px 12px;font-family:var(--mono);font-size:10px;min-width:200px;z-index:10;animation:tipup 0.15s ease;}
+    @keyframes tipup{from{opacity:0;transform:translateX(-50%) translateY(6px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
+    .nt-type{font-size:8px;font-weight:700;color:var(--cyan);letter-spacing:1px;margin-bottom:7px;}
+    .nt-row{display:flex;justify-content:space-between;gap:14px;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.03);}
+    .nt-k{color:var(--dim);}
+    .nt-v{color:var(--white);font-weight:600;}
+    #node-tip .ntc{position:absolute;top:6px;right:8px;cursor:pointer;color:var(--dim);font-size:11px;}
+    #rcol{display:flex;flex-direction:column;gap:9px;overflow:hidden;}
+    #score-box{display:none;flex-shrink:0;background:var(--panel);border:1px solid var(--b1);border-radius:3px;padding:14px;}
+    .sc-lbl{font-family:var(--mono);font-size:7px;font-weight:700;color:var(--dim);letter-spacing:1.8px;margin-bottom:3px;text-align:center;}
+    #sc-num{font-family:var(--mono);font-size:52px;font-weight:800;color:var(--white);line-height:1;margin-bottom:3px;font-feature-settings:'tnum';text-align:center;}
+    #sc-num.high{color:var(--red);}
+    #sc-num.medium{color:var(--amber);}
+    #sc-num.low{color:var(--green);}
+    .tbar{height:2px;background:rgba(255,255,255,0.05);border-radius:1px;overflow:hidden;margin-bottom:10px;}
+    .tfill{height:100%;background:linear-gradient(90deg,var(--green) 0%,var(--amber) 50%,var(--red) 100%);transition:width 1.2s cubic-bezier(.4,0,.2,1);}
+    #sc-breakdown{border-top:1px solid var(--b1);padding-top:8px;font-family:var(--mono);font-size:9px;}
+    .bd-row{display:flex;justify-content:space-between;padding:2px 0;color:var(--dim);}
+    .bd-row .bd-pts{color:var(--text);}
+    .bd-sep{border-top:1px solid var(--b1);margin:4px 0;}
+    .bd-sub{display:flex;justify-content:space-between;padding:2px 0;color:var(--text);}
+    .bd-total{display:flex;justify-content:space-between;padding:4px 0;margin-top:2px;border-top:1px solid var(--b2);color:var(--white);font-weight:700;font-size:10px;}
+    #ev-panel{flex:1;overflow:hidden;}
+    #ev-scroll{height:calc(100% - 34px);overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--b1) transparent;}
+    #ev-scroll::-webkit-scrollbar{width:3px;}
+    #ev-scroll::-webkit-scrollbar-thumb{background:var(--b2);}
+    .ecard{margin:7px;padding:9px 10px;background:var(--card);border:1px solid var(--b1);border-radius:2px;border-left:2px solid;animation:slider 0.28s ease both;}
+    @keyframes slider{from{opacity:0;transform:translateX(8px);}to{opacity:1;transform:translateX(0);}}
+    .ecard.atk{border-left-color:var(--red);}
+    .ecard.norm{border-left-color:var(--cyan);}
+    .ehead{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;}
+    .etype{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:8px;font-weight:700;color:var(--dim);letter-spacing:0.8px;}
+    .eico{width:16px;height:16px;border-radius:2px;display:flex;align-items:center;justify-content:center;font-size:9px;}
+    .eico.t{background:rgba(255,45,85,0.14);}
+    .eico.d{background:rgba(191,90,242,0.14);}
+    .eico.b{background:rgba(255,214,10,0.1);}
+    .e-signal{font-family:var(--mono);font-size:7px;font-weight:700;letter-spacing:0.8px;padding:2px 5px;border-radius:2px;background:rgba(0,212,255,0.1);color:var(--cyan);border:1px solid rgba(0,212,255,0.2);}
+    .escore{font-family:var(--mono);font-size:22px;font-weight:800;color:var(--white);margin-bottom:3px;font-feature-settings:'tnum';}
+    .escore small{font-size:9px;font-weight:400;color:var(--dim);}
+    .edetail{font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.75;}
+    .edetail .hi{color:var(--white);}
+    #t-val{overflow-y:auto;padding:18px 22px;scrollbar-width:thin;scrollbar-color:var(--b1) transparent;}
+    #t-val::-webkit-scrollbar{width:3px;}
+    #t-val::-webkit-scrollbar-thumb{background:var(--b2);}
+    .v-title{font-family:var(--mono);font-size:15px;font-weight:800;color:var(--white);margin-bottom:5px;}
+    .v-sub{font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.7;margin-bottom:20px;}
+    .vsec{margin-bottom:20px;}
+    .vsec-title{font-family:var(--mono);font-size:8px;font-weight:700;color:var(--dim);letter-spacing:1.8px;padding-bottom:6px;margin-bottom:10px;border-bottom:1px solid var(--b1);}
+    .vstat-row{display:flex;gap:8px;flex-wrap:wrap;}
+    .vstat{flex:1;min-width:110px;background:var(--panel);border:1px solid var(--b1);border-radius:2px;padding:10px 12px;}
+    .vstat-l{font-family:var(--mono);font-size:7px;font-weight:700;color:var(--dim);letter-spacing:1.2px;margin-bottom:3px;}
+    .vstat-v{font-family:var(--mono);font-size:26px;font-weight:800;font-feature-settings:'tnum';color:var(--white);}
+    .vstat-v.c{color:var(--cyan);}
+    .vstat-v.g{color:var(--green);}
+    .vstat-v.r{color:var(--red);}
+    .vtable{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;}
+    .vtable th{font-size:8px;font-weight:700;letter-spacing:1.2px;color:var(--dim);text-align:left;padding:6px 10px;border-bottom:1px solid var(--b2);white-space:nowrap;}
+    .vtable td{padding:8px 10px;color:var(--text);border-bottom:1px solid rgba(255,255,255,0.025);font-feature-settings:'tnum';}
+    .vtable tr.vtotal td{color:var(--white);font-weight:700;border-top:1px solid var(--b2);border-bottom:none;}
+    .cp{color:var(--green);font-weight:700;}
+    .cb{color:var(--red);font-weight:700;}
+    .cw{color:var(--amber);font-weight:700;}
+    .atbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:9px;}
+    .atbl th{font-size:7px;font-weight:700;letter-spacing:1px;color:var(--dim);text-align:left;padding:5px 8px;border-bottom:1px solid var(--b1);}
+    .atbl td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.02);}
+    .tag-a{color:var(--red);font-weight:700;}
+    .tag-fp{color:var(--amber);font-weight:700;}
+    .tag-tn{color:var(--dim);}
+    .tv{color:var(--green);}
+    .tn-c{color:var(--dim);}
+    .vverd{background:var(--panel);border:1px solid var(--b1);border-radius:3px;padding:16px 18px;font-family:var(--mono);}
+    .vvl{font-size:7px;font-weight:700;letter-spacing:1.5px;color:var(--dim);margin-bottom:9px;}
+    .vvt{font-size:17px;font-weight:800;color:var(--green);margin-bottom:7px;line-height:1.3;}
+    .vvt.fail{color:var(--red);}
+    .vvs{font-size:9px;color:var(--dim);line-height:1.9;}
+    #v-spin{display:flex;align-items:center;justify-content:center;gap:10px;padding:60px 0;font-family:var(--mono);font-size:10px;color:var(--dim);}
+    .spinner{width:18px;height:18px;border:2px solid rgba(0,212,255,0.1);border-top-color:var(--cyan);border-radius:50%;animation:spin 0.7s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="logo-mark">PRAI</span>
+    <span class="logo-name">Payment Rail <em>Attack Graph</em> Investigator</span>
+    <div id="hstats">
+      <div class="hdiv"></div>
+      <div class="chip">EVENTS <b id="c-ev">—</b></div>
+      <div class="chip">FLAGS <b id="c-fl">—</b></div>
+      <div class="chip">ACCOUNTS <b id="c-ac">—</b></div>
+      <div class="chip">FLAGGED <b class="r" id="c-fg">—</b></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('inv',this)">INVESTIGATE</button>
+      <button class="tab" onclick="switchTab('val',this)">VALIDATE</button>
+    </div>
+    <div class="hctrl">
+      <button id="exp-btn" onclick="exportJSON()">↓ JSON</button>
+      <select id="acct-sel"></select>
+      <button id="inv-btn" onclick="investigate()">▶ RUN</button>
+    </div>
+  </header>
+
+  <div id="t-inv" class="tab-content active">
+    <div id="verdict"></div>
+    <div id="killchain"></div>
+    <div id="inv-grid">
+      <div class="panel" id="graph-panel">
+        <div class="pbar">
+          <span class="plabel">ATTACK GRAPH — LEFT-TO-RIGHT TRAVERSAL</span>
+          <span class="pmeta" id="g-meta"></span>
+        </div>
+        <div id="cy-wrap">
+          <div id="cy"></div>
+          <div id="scan-log"></div>
+          <div id="empty">
+            <div class="e-ring">⬡</div>
+            <div class="e-txt">SELECT ACCOUNT → CLICK RUN<br>TO RECONSTRUCT ATTACK PATH</div>
+          </div>
+          <div id="node-tip">
+            <span class="ntc" onclick="closeTip()">✕</span>
+            <div class="nt-type" id="nt-type"></div>
+            <div id="nt-rows"></div>
+          </div>
+          <div id="g-leg">
+            <div class="gl-title">NODE TYPES</div>
+            <div class="gl-row"><span class="gl-dot" style="background:#ff2d55;box-shadow:0 0 5px #ff2d55"></span>Attack</div>
+            <div class="gl-row"><span class="gl-dot" style="background:#0a84ff"></span>Login</div>
+            <div class="gl-row"><span class="gl-dot" style="background:#bf5af2"></span>Beneficiary / Payment</div>
+            <div class="gl-row"><span class="gl-dot" style="background:#ffd60a"></span>Fund Transfer</div>
+          </div>
+          <div id="g-tools">
+            <button class="g-btn" onclick="cyFit()">⊡</button>
+            <button class="g-btn" onclick="cyZoom(1.2)">+</button>
+            <button class="g-btn" onclick="cyZoom(0.8)">−</button>
+          </div>
+        </div>
+      </div>
+      <div id="rcol">
+        <div id="score-box">
+          <div class="sc-lbl">RISK SCORE</div>
+          <div id="sc-num">0</div>
+          <div class="tbar"><div class="tfill" id="tfill" style="width:0%"></div></div>
+          <div id="sc-breakdown"></div>
+        </div>
+        <div class="panel" id="ev-panel">
+          <div class="pbar"><span class="plabel">EVIDENCE TRAIL</span></div>
+          <div id="ev-scroll"><div id="ev-list"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="t-val" class="tab-content">
+    <div id="v-spin"><div class="spinner"></div>Loading validation report...</div>
+    <div id="v-content" style="display:none">
+      <div class="v-title">System Validation Report</div>
+      <div class="v-sub" id="v-sub"></div>
+      <div class="vsec">
+        <div class="vsec-title">DATASET SUMMARY</div>
+        <div class="vstat-row">
+          <div class="vstat"><div class="vstat-l">HIDDEN ATTACKS</div><div class="vstat-v c" id="vs-atk">—</div></div>
+          <div class="vstat"><div class="vstat-l">DETECTED (TP)</div><div class="vstat-v g" id="vs-tp">—</div></div>
+          <div class="vstat"><div class="vstat-l">FALSE POSITIVES</div><div class="vstat-v" id="vs-fp">—</div></div>
+          <div class="vstat"><div class="vstat-l">TRUE NEGATIVES</div><div class="vstat-v g" id="vs-tn">—</div></div>
+        </div>
+      </div>
+      <div class="vsec">
+        <div class="vsec-title">PRECISION / RECALL / F1 BY DETECTOR</div>
+        <div style="background:var(--panel);border:1px solid var(--b1);border-radius:3px;overflow:hidden;">
+          <table class="vtable">
+            <thead><tr><th>DETECTOR</th><th>TP</th><th>FP</th><th>FN</th><th>PRECISION</th><th>RECALL</th><th>F1</th></tr></thead>
+            <tbody id="v-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="vsec">
+        <div class="vsec-title">PER-ACCOUNT FLAGGING (ATTACKS + FALSE POSITIVES ONLY)</div>
+        <div style="background:var(--panel);border:1px solid var(--b1);border-radius:3px;overflow:hidden;">
+          <table class="atbl">
+            <thead><tr><th>ACCOUNT</th><th>CLASSIFICATION</th><th>FLAGGED</th><th>TRAVEL</th><th>DEVICE</th><th>BYPASS</th></tr></thead>
+            <tbody id="v-abody"></tbody>
+          </table>
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:7px;" id="v-tn-note"></div>
+      </div>
+      <div class="vsec">
+        <div class="vsec-title">VALIDATION VERDICT</div>
+        <div class="vverd">
+          <div class="vvl">RESULT</div>
+          <div class="vvt" id="vvt">—</div>
+          <div class="vvs" id="vvs">—</div>
+        </div>
+      </div>
+      <div class="vsec">
+        <div class="vsec-title">ENGINEERING NOTES — BUGS FOUND DURING VALIDATION</div>
+        <div style="background:var(--panel);border:1px solid var(--b1);border-radius:3px;padding:14px 16px;font-family:var(--mono);font-size:10px;color:var(--text);line-height:1.8;">
+          <div style="margin-bottom:14px;">
+            <div style="color:var(--amber);font-weight:700;font-size:9px;letter-spacing:0.6px;margin-bottom:4px;">01 · "NULL ISLAND" GEOLOCATION BUG</div>
+            <div>Impossible-travel detection initially returned <b style="color:var(--white)">0% recall</b> despite real country changes being present. Root cause: unmapped country codes silently defaulted to (0, 0) — a real coordinate off the Gulf of Guinea. Two different unmapped countries would collapse onto the same point, making genuine travel invisible. <b style="color:var(--green)">Fix:</b> unmapped countries now return <code>None</code> and are explicitly skipped rather than guessed, with the missing codes logged for review.</div>
+          </div>
+          <div>
+            <div style="color:var(--amber);font-weight:700;font-size:9px;letter-spacing:0.6px;margin-bottom:4px;">02 · SPARSE LOGIN HISTORY MASKING ATTACKS</div>
+            <div>Even after the geolocation fix, several real country-change attacks still went undetected. Root cause: accounts login only ~10 times over 30 days, so an injected attack's nearest chronological neighbor could be days away — collapsing the required travel speed below the detection threshold regardless of actual distance. <b style="color:var(--green)">Fix:</b> each injected attack now includes a realistic "last known normal login" 20–90 minutes prior, mirroring how real impossible-travel detection always compares against the victim's most recent session.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const API = "http://127.0.0.1:8000";
+let cy = null, lastData = null, valLoaded = false;
+
+function switchTab(name, btn) {
+  document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.getElementById(`t-${name}`).classList.add("active");
+  btn.classList.add("active");
+  if (name === "val" && !valLoaded) loadValidation();
+}
+
+async function loadStats() {
+  try {
+    const d = await fetch(`${API}/stats`).then(r => r.json());
+    document.getElementById("c-ev").textContent = d.total_events.toLocaleString();
+    document.getElementById("c-fl").textContent = d.total_flags;
+    document.getElementById("c-ac").textContent = d.accounts_analyzed;
+    document.getElementById("c-fg").textContent = d.flagged_accounts;
+    document.getElementById("hstats").style.display = "flex";
+  } catch(e) {}
+}
+
+async function loadAccounts() {
+  const d   = await fetch(`${API}/flagged-accounts`).then(r => r.json());
+  const sel = document.getElementById("acct-sel");
+  sel.innerHTML = "";
+  d.flagged_accounts.forEach(id => {
+    const o = document.createElement("option");
+    o.value = o.textContent = id;
+    sel.appendChild(o);
+  });
+}
+
+async function runLog(data) {
+  const log = document.getElementById("scan-log");
+  document.getElementById("empty").style.display = "none";
+  log.style.display = "block"; log.innerHTML = "";
+  const ts = () => new Date().toTimeString().slice(0, 8);
+  const tf = data.evidence.find(e => e.flag_type === "impossible_travel");
+  const df = data.evidence.find(e => e.flag_type === "new_device_login");
+  const bf = data.evidence.find(e => e.flag_type === "approval_bypass");
+  const lines = [
+    `[${ts()}] <span class="ld">────────────────────────────────────────</span>`,
+    `[${ts()}] Loading synthetic_logs.json...`,
+    `[${ts()}] Target account: <b style="color:#fff">${data.account_id}</b>`,
+    `[${ts()}] <span class="ld">────────────────────────────────────────</span>`,
+    `[${ts()}] detector: impossible_travel`,
+    ...(tf ? [
+      `[${ts()}]   ${tf.detail.from_country} → ${tf.detail.to_country}  ${tf.detail.distance_km}km in ${tf.detail.hours_elapsed}h`,
+      `[${ts()}]   req. speed: ${tf.detail.required_speed_kmh}km/h  <span class="lw">⚠ FLAGGED +${tf.base_score}pts</span>`,
+    ] : [`[${ts()}]   no flags`]),
+    `[${ts()}] detector: new_device_login`,
+    ...(df ? [`[${ts()}]   device: ${df.detail.device_id}  <span class="lw">⚠ FLAGGED +${df.base_score}pts</span>`] : [`[${ts()}]   no flags`]),
+    `[${ts()}] detector: approval_bypass`,
+    ...(bf ? [`[${ts()}]   gap: ${bf.detail.gap_seconds}s / threshold: 60s  <span class="lw">⚠ FLAGGED +${bf.base_score}pts</span>`] : [`[${ts()}]   no flags`]),
+    `[${ts()}] <span class="ld">────────────────────────────────────────</span>`,
+    `[${ts()}] building graph... ${data.graph.nodes.length} nodes  ${data.graph.edges.length} edges`,
+    `[${ts()}] kill-chain: ${data.kill_chain.join(" → ")}`,
+    `[${ts()}] scoring: ${data.risk.stage_count} stages × ${data.risk.multiplier}x = <b style="color:#fff">${data.risk.final_score}</b>`,
+    `[${ts()}] <span class="lw">⚠ VERDICT: ${data.risk.verdict}</span>`,
+    `[${ts()}] rendering graph...`,
+  ];
+  for (const line of lines) {
+    await new Promise(r => setTimeout(r, 75));
+    const d = document.createElement("div");
+    d.className = "ll"; d.innerHTML = line;
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  }
+  await new Promise(r => setTimeout(r, 350));
+  log.style.display = "none";
+}
+
+async function investigate() {
+  const id = document.getElementById("acct-sel").value;
+  if (!id) return;
+  const btn = document.getElementById("inv-btn");
+  btn.textContent = "SCANNING..."; btn.classList.add("busy");
+  try {
+    const data = await fetch(`${API}/investigate/${id}`).then(r => r.json());
+    lastData = data;
+    loadStats();
+    await runLog(data);
+    btn.textContent = "▶ RUN"; btn.classList.remove("busy");
+    renderVerdict(data.risk);
+    renderKillChain(data.kill_chain);
+    renderGraph(data.graph);
+    renderEvidence(data.evidence, data.risk);
+    document.getElementById("exp-btn").style.display = "block";
+  } catch(e) {
+    btn.textContent = "▶ RUN"; btn.classList.remove("busy");
+  }
+}
+
+function renderVerdict(risk) {
+  const el  = document.getElementById("verdict");
+  const lvl = risk.final_score >= 150 ? "high" : risk.final_score >= 80 ? "medium" : "low";
+  const pre = { high:"[ HIGH RISK ]", medium:"[ MEDIUM RISK ]", low:"[ LOW RISK ]" };
+  el.textContent = `${pre[lvl]}  ${risk.verdict}`;
+  el.className = lvl; el.style.display = "block";
+}
+
+function renderKillChain(stages) {
+  const bar = document.getElementById("killchain");
+  bar.innerHTML = '<span class="kc-tag">KILL CHAIN</span>';
+  bar.style.display = "flex";
+  stages.forEach((s, i) => {
+    const p = document.createElement("span");
+    p.className = "kc-pill"; p.textContent = s;
+    p.style.animationDelay = `${i * 0.07}s`; bar.appendChild(p);
+    if (i < stages.length - 1) {
+      const a = document.createElement("span");
+      a.className = "kc-sep"; a.textContent = " → "; bar.appendChild(a);
+    }
+  });
+}
+
+// Graph: filtered to key nodes only so dagre LR fills the panel at natural zoom.
+// A 15+ node linear chain would zoom out to ~0.3x making nodes unreadably small.
+// Keeping only attack nodes + non-login events + 1 entry login gives 5-7 nodes
+// which dagre LR fits at ~0.9x zoom — visible and readable without manual zoom.
+const NC = { login:"#0a84ff", beneficiary_added:"#bf5af2", payment:"#bf5af2", fund_transfer:"#ffd60a" };
+const NS = { login:"ellipse", beneficiary_added:"round-rectangle", payment:"diamond", fund_transfer:"cut-rectangle" };
+const NL = { login:"Login", beneficiary_added:"Beneficiary\nAdded", payment:"Payment", fund_transfer:"Transfer" };
+
+function renderGraph(g) {
+  document.getElementById("empty").style.display   = "none";
+  document.getElementById("g-leg").style.display   = "block";
+  document.getElementById("g-tools").style.display = "flex";
+
+  // Keep first 3 clean logins (normal activity context) + all attack nodes + non-login events
+  const cleanLogins = [...g.nodes]
+    .filter(n => !n.is_attack && n.type === "login")
+    .sort((a, b) => (a.timestamp||"") < (b.timestamp||"") ? -1 : 1)
+    .slice(0, 3);                          // ← change this number to show more/fewer
+
+  const keyOther = g.nodes.filter(n => n.is_attack || n.type !== "login");
+
+  // merge, deduplicate, preserve chronological order
+  const seenIds = new Set();
+  let keyNodes = [];
+  for (const n of [...cleanLogins, ...keyOther]) {
+    if (!seenIds.has(n.id)) { seenIds.add(n.id); keyNodes.push(n); }
+  } 
+  
+  keyNodes.sort((a, b) => (a.timestamp||"") < (b.timestamp||"") ? -1 : 1);
+
+  const visibleIds = new Set(keyNodes.map(n => n.id));
+  const atkIds     = new Set(keyNodes.filter(n => n.is_attack).map(n => n.id));
+  const origEdges  = g.edges.filter(e => visibleIds.has(e.source) && visibleIds.has(e.target));
+
+  // Close gaps caused by removed login nodes with sequential edges
+  const seqEdges = [];
+  for (let i = 0; i < keyNodes.length - 1; i++) {
+    const src = keyNodes[i].id, tgt = keyNodes[i+1].id;
+    if (!origEdges.some(e => e.source === src && e.target === tgt))
+      seqEdges.push({ source: src, target: tgt });
+  }
+  const allEdges = [...origEdges, ...seqEdges];
+
+  document.getElementById("g-meta").textContent =
+    `${keyNodes.length} key nodes  ·  ${g.nodes.length} total timeline events`;
+
+  const els = [
+    ...keyNodes.map(n => ({ data: { id:n.id, type:n.type, ts:n.timestamp, atk:n.is_attack } })),
+    ...allEdges.map(e => ({ data: { source:e.source, target:e.target, ae:atkIds.has(e.source)&&atkIds.has(e.target) } })),
+  ];
+
+  if (cy) cy.destroy();
+  cy = cytoscape({
+    container: document.getElementById("cy"),
+    elements:  els,
+    layout: {
+      name: "dagre", rankDir: "LR",
+      nodeSep: 60, rankSep: 110, padding: 60,
+      fit: true, animate: true, animationDuration: 500,
+    },
+    style: [
+      { selector: "node", style: {
+        "background-color":   n => n.data("atk") && n.data("type") === "login" ? "#ff2d55" : (NC[n.data("type")]||"#0a84ff"),
+        "shape":              n => NS[n.data("type")]||"ellipse",
+        "label":              n => `${NL[n.data("type")]||n.data("type")}\n${(n.data("ts")||"").slice(11,16)}`,
+        "color":"#fff","font-size":"10px","font-family":"JetBrains Mono,monospace",
+        "text-valign":"center","text-halign":"center","text-wrap":"wrap",
+        "width":64,"height":64,
+        "border-width":  n => n.data("atk") ? 2 : 1,
+        "border-color":  n => n.data("atk") ? "#ff6b87" : "rgba(255,255,255,0.08)",
+        "shadow-blur":   n => n.data("atk") ? 24 : 0,
+        "shadow-color":"#ff2d55","shadow-opacity":0.9,"shadow-offset-x":0,"shadow-offset-y":0,
+      }},
+      { selector: "edge", style: {
+        "width":              e => e.data("ae") ? 2.5 : 1.5,
+        "line-color":         e => e.data("ae") ? "#ff2d55" : "rgba(255,255,255,0.12)",
+        "target-arrow-color": e => e.data("ae") ? "#ff2d55" : "rgba(255,255,255,0.12)",
+        "target-arrow-shape":"triangle","curve-style":"bezier",
+        "line-style":         e => e.data("ae") ? "dashed" : "solid",
+        "line-dash-pattern":[7,3],"arrow-scale":1.4,
+      }},
+      { selector:"node:selected", style:{"border-width":3,"border-color":"#fff"} },
+    ],
+  });
+  cy.on("tap","node", evt => showTip(evt.target));
+  cy.on("tap", evt => { if (evt.target===cy) closeTip(); });
+  cy.nodes("[atk]").forEach(pulse);
+}
+
+function pulse(n) {
+  n.animate({style:{"border-width":4}},{duration:950,easing:"ease-in-out",
+    complete:()=>n.animate({style:{"border-width":2}},{duration:950,easing:"ease-in-out",complete:()=>pulse(n)})});
+}
+function cyFit()   { cy && cy.fit(undefined, 60); }
+function cyZoom(f) { cy && cy.zoom({level:cy.zoom()*f,renderedPosition:{x:cy.width()/2,y:cy.height()/2}}); }
+
+function showTip(node) {
+  const L = { login:"LOGIN EVENT", beneficiary_added:"BENEFICIARY ADDED", payment:"PAYMENT", fund_transfer:"FUND TRANSFER" };
+  document.getElementById("nt-type").textContent = L[node.data("type")]||node.data("type");
+  const ts = (node.data("ts")||"").slice(0,19).replace("T"," ");
+  const rows = { "NODE":node.id().slice(0,26), "TIME":ts||"—", "TYPE":node.data("type"), "STATUS":node.data("atk")?"CONFIRMED SIGNAL":"clean" };
+  document.getElementById("nt-rows").innerHTML = Object.entries(rows).map(([k,v])=>
+    `<div class="nt-row"><span class="nt-k">${k}</span><span class="nt-v" style="${k==='STATUS'&&node.data('atk')?"color:var(--cyan)":""}">${v}</span></div>`
+  ).join("");
+  document.getElementById("node-tip").style.display = "block";
+}
+function closeTip() { document.getElementById("node-tip").style.display = "none"; }
+
+function countUp(target) {
+  const el = document.getElementById("sc-num");
+  const dur = 1200, t0 = performance.now();
+  (function step(now) {
+    const p = Math.min((now-t0)/dur,1), e = 1-Math.pow(1-p,3);
+    el.textContent = Math.round(e*target);
+    if (p<1) requestAnimationFrame(step);
+  })(t0);
+}
+
+const FLAG_LABELS = { impossible_travel:"Impossible Travel", new_device_login:"New Device Login", approval_bypass:"Approval Bypass" };
+
+function renderBreakdown(evidence, risk) {
+  const bd = document.getElementById("sc-breakdown");
+  const flagSum = evidence.reduce((s,f) => s+f.base_score, 0);
+  const hopBon  = risk.base_score - flagSum;
+  const numHops = hopBon > 0 ? Math.round(hopBon/15) : 0;
+  let html = "";
+  evidence.forEach(f => {
+    html += `<div class="bd-row"><span>${FLAG_LABELS[f.flag_type]||f.flag_type}</span><span class="bd-pts">+${f.base_score}</span></div>`;
+  });
+  if (numHops > 0) html += `<div class="bd-row"><span>Fund Transfers (×${numHops})</span><span class="bd-pts">+${hopBon}</span></div>`;
+  html += `<div class="bd-sep"></div>`;
+  html += `<div class="bd-sub"><span>Σ base indicators</span><span>${risk.base_score}</span></div>`;
+  html += `<div class="bd-sub"><span>× kill-chain (${risk.stage_count} stages)</span><span>${risk.multiplier}x</span></div>`;
+  html += `<div class="bd-total"><span>= Risk Score</span><span>${risk.final_score}</span></div>`;
+  bd.innerHTML = html;
+}
+
+const EVM = {
+  impossible_travel:{ico:"✈",cls:"t",label:"IMPOSSIBLE TRAVEL"},
+  new_device_login: {ico:"💻",cls:"d",label:"NEW DEVICE LOGIN"},
+  approval_bypass:  {ico:"⚡",cls:"b",label:"APPROVAL BYPASS"},
+};
+
+function renderEvidence(evidence, risk) {
+  document.getElementById("score-box").style.display = "block";
+  const lvl = risk.final_score>=150?"high":risk.final_score>=80?"medium":"low";
+  document.getElementById("sc-num").className = lvl;
+  countUp(risk.final_score);
+  setTimeout(()=>{ document.getElementById("tfill").style.width = Math.min(risk.final_score/280*100,100)+"%"; },120);
+  renderBreakdown(evidence, risk);
+  const list = document.getElementById("ev-list");
+  list.innerHTML = "";
+  evidence.forEach((flag,i) => {
+    const m = EVM[flag.flag_type]||{ico:"⚠",cls:"t",label:flag.flag_type};
+    const d = flag.detail; let lines=[];
+    if (d.from_country&&d.to_country) lines.push(`<span class="hi">${d.from_country} → ${d.to_country}</span>`);
+    if (d.distance_km)    lines.push(`${d.distance_km}km in ${d.hours_elapsed}h`);
+    if (d.required_speed_kmh) lines.push(`req speed: <span class="hi">${d.required_speed_kmh}km/h</span>`);
+    if (d.device_id)      lines.push(`device: <span class="hi">${d.device_id}</span>`);
+    if (d.gap_seconds)    lines.push(`approved in <span class="hi">${d.gap_seconds}s</span> / limit 60s`);
+    if (d.amount)         lines.push(`amount: <span class="hi">$${Number(d.amount).toLocaleString()}</span>`);
+    const c = document.createElement("div");
+    c.className = `ecard ${flag.is_attack?"atk":"norm"}`;
+    c.style.animationDelay = `${i*0.06}s`;
+    c.innerHTML = `
+      <div class="ehead">
+        <div class="etype"><div class="eico ${m.cls}">${m.ico}</div>${m.label}</div>
+        ${flag.is_attack?'<span class="e-signal">CONFIRMED SIGNAL</span>':""}
+      </div>
+      <div class="escore">${flag.base_score} <small>pts</small></div>
+      <div class="edetail">${lines.join("<br>")}</div>
+    `;
+    list.appendChild(c);
+  });
+}
+
+async function loadValidation() {
+  valLoaded = true;
+  try {
+    const d = await fetch(`${API}/validate`).then(r => r.json());
+    document.getElementById("v-spin").style.display    = "none";
+    document.getElementById("v-content").style.display = "block";
+    renderValidation(d);
+  } catch(e) {
+    document.getElementById("v-spin").innerHTML =
+      `<span style="color:var(--red);font-family:var(--mono);font-size:10px;">Error — is the server running?</span>`;
+  }
+}
+
+function mc(v, isMet=false) {
+  if (!isMet) return v===0?`<td class="cp">0</td>`:`<td class="cb">${v}</td>`;
+  const cls = v>=1.0?"cp":v>=0.8?"cw":"cb";
+  return `<td class="${cls}">${v.toFixed(2)}</td>`;
+}
+
+function renderValidation(d) {
+  const o = d.overall;
+  document.getElementById("v-sub").textContent =
+    `Tested against ${d.ground_truth_accounts.length} known attack chains hidden among ` +
+    `${o.tp+o.fp+o.fn+o.tn} total accounts — ${new Date().toLocaleString()}`;
+  document.getElementById("vs-atk").textContent = d.ground_truth_accounts.length;
+  document.getElementById("vs-tp").textContent  = o.tp;
+  const fpEl = document.getElementById("vs-fp");
+  fpEl.textContent = o.fp; fpEl.className = `vstat-v ${o.fp===0?"g":"r"}`;
+  document.getElementById("vs-tn").textContent  = o.tn;
+  const det = d.by_detector;
+  document.getElementById("v-tbody").innerHTML = [
+    ["IMPOSSIBLE TRAVEL",det.impossible_travel],
+    ["NEW DEVICE LOGIN", det.new_device_login],
+    ["APPROVAL BYPASS",  det.approval_bypass],
+  ].map(([l,m])=>
+    `<tr><td>${l}</td><td class="cp">${m.tp}</td>${mc(m.fp)}${mc(m.fn)}${mc(m.precision,true)}${mc(m.recall,true)}${mc(m.f1,true)}</tr>`
+  ).join("") +
+    `<tr class="vtotal"><td>SYSTEM (ANY DETECTOR)</td><td class="cp">${o.tp}</td>${mc(o.fp)}${mc(o.fn)}${mc(o.precision,true)}${mc(o.recall,true)}${mc(o.f1,true)}</tr>`;
+  const t = v => v?`<span class="tv">✓</span>`:`<span class="tn-c">·</span>`;
+  document.getElementById("v-abody").innerHTML = d.accounts.map(a => {
+    const gc = a.ground_truth?"tag-a":a.false_positive?"tag-fp":"tag-tn";
+    const gt = a.ground_truth?"ATTACK ⚠":a.false_positive?"FALSE POSITIVE":"clean";
+    const fl = a.flagged?(a.false_positive?`<span style="color:var(--amber)">YES (FP)</span>`:`<span style="color:var(--green)">YES</span>`):"no";
+    return `<tr>
+      <td style="color:var(--white);font-weight:700">${a.account_id}</td>
+      <td class="${gc}">${gt}</td><td>${fl}</td>
+      <td>${t(a.detectors.travel)}</td><td>${t(a.detectors.device)}</td><td>${t(a.detectors.bypass)}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("v-tn-note").textContent =
+    `+ ${o.tn} clean accounts with zero flags (true negatives — omitted for brevity)`;
+  const vt = document.getElementById("vvt");
+  const perf = o.recall===1.0&&o.fp===0;
+  if (perf) { vt.textContent="PERFECT — ALL ATTACKS CAUGHT, ZERO FALSE POSITIVES"; vt.className="vvt"; }
+  else if (o.recall===1.0) { vt.textContent=`ALL ATTACKS CAUGHT — ${o.fp} FALSE POSITIVE(S)`; vt.className="vvt"; }
+  else { vt.textContent=`PARTIAL — ${o.fn} ATTACK(S) MISSED`; vt.className="vvt fail"; }
+  document.getElementById("vvs").textContent =
+    `${o.tp} of ${d.ground_truth_accounts.length} attacks detected (${(o.recall*100).toFixed(0)}% recall)  ·  ` +
+    `${o.fp} false positives among ${o.tn+o.fp} clean accounts  ·  F1: ${o.f1.toFixed(2)}`;
+}
+
+function exportJSON() {
+  if (!lastData) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(lastData,null,2)],{type:"application/json"}));
+  a.download = `investigation-${lastData.account_id}-${Date.now()}.json`;
+  a.click();
+}
+
+loadAccounts();
+</script>
+</body>
+</html>
